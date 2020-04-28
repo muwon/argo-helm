@@ -4,7 +4,10 @@ images:
   server: argocli
   executor: argoexec
   pullPolicy: Always
-  tag: v2.6.1
+  # Secrets with credentials to pull images from a private registry
+  pullSecrets: []
+  # - name: argo-pull-secret
+  tag: v2.11.3
 
 crdVersion: v1alpha1
 installCRD: true
@@ -16,6 +19,19 @@ init:
 
 createAggregateRoles: true
 
+# Restrict Argo to only deploy into a single namespace by apply Roles and RoleBindings instead of the Cluster equivalents,
+# and start argo-cli with the --namespaced flag. Use it in clusters with strict access policy.
+singleNamespace: false
+
+workflow:
+  namespace: ""  # Speficy namespace if workflows run in another namespace than argo. This controls where the service account and RBAC resources will be created.
+  serviceAccount:
+    create: false  # Specifies whether a service account should be created
+    annotations: {}
+    name: "argo-workflow"  # Service account which is used to run workflows
+  rbac:
+    create: false  # adds Role and RoleBinding for the above specified service account to be able to run workflows
+
 controller:
   image:
     # Overrides .images.tag if defined.
@@ -24,29 +40,41 @@ controller:
   podAnnotations: {}
   # Optional labels to add to the controller pods
   podLabels: {}
+  # SecurityContext to set on the controller pods
+  podSecurityContext: {}
   # podPortName: http
   metricsConfig:
     enabled: false
     path: /metrics
     port: 8080
   persistence: {}
-  #  connectionPool:
-  #    maxIdleConns: 100
-  #    maxOpenConns: 0
-  #  # save the entire workflow into etcd and DB
-  #  nodeStatusOffLoad: false
-  #  postgresql:
-  #    host: localhost
-  #    port: 5432
-  #    database: postgres
-  #    tableName: argo_workflows
-  #    # the database secrets must be in the same namespace of the controller
-  #    userNameSecret:
-  #      name: argo-postgres-config
-  #      key: username
-  #    passwordSecret:
-  #      name: argo-postgres-config
-  #      key: password
+  # connectionPool:
+  #   maxIdleConns: 100
+  #   maxOpenConns: 0
+  # # save the entire workflow into etcd and DB
+  # nodeStatusOffLoad: false
+  # # enable archiving of old workflows
+  # archive: false
+  # postgresql:
+  #   host: localhost
+  #   port: 5432
+  #   database: postgres
+  #   tableName: argo_workflows
+  #   # the database secrets must be in the same namespace of the controller
+  #   userNameSecret:
+  #     name: argo-postgres-config
+  #     key: username
+  #   passwordSecret:
+  #     name: argo-postgres-config
+  #     key: password
+  workflowDefaults: {}  # Only valid for 2.7+
+  #  spec:
+  #    ttlStrategy:
+  #      secondsAfterCompletion: 84600
+  # workflowWorkers: 32
+  # podWorkers: 32
+  workflowRestrictions: {}  # Only valid for 2.9+
+  #  templateReferencing: Strict|Secure
   telemetryConfig:
     enabled: false
     path: /telemetry
@@ -55,6 +83,8 @@ controller:
     enabled: false
     additionalLabels: {}
   serviceAccount: argo
+  # Service account annotations
+  serviceAccountAnnotations: {}
   name: workflow-controller
   workflowNamespaces:
     - default
@@ -91,19 +121,24 @@ controller:
   ## Node selectors and tolerations for server scheduling to nodes with taints
   ## Ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/
   ##
-  nodeSelector: {}
+  nodeSelector:
+    kubernetes.io/os: linux
   tolerations: []
   affinity: {}
 
+# executor controls how the init and wait container should be customized
 executor:
   image:
     # Overrides .images.tag if defined.
     tag: ""
+  resources: {}
+  # Adds environment variables for the executor.
+  env: {}
+  # sets security context for the executor container
+  securityContext: {}
 
 server:
   enabled: true
-  # only show workflows where UI installed
-  forceNamespaceIsolation: false
   # only updates base url of resources on client side,
   # it's expected that a proxy server rewrites the request URL and gets rid of this prefix
   # https://github.com/argoproj/argo/issues/716#issuecomment-433213190
@@ -115,11 +150,18 @@ server:
   podAnnotations: {}
   # Optional labels to add to the UI pods
   podLabels: {}
+  # SecurityContext to set on the server pods
+  podSecurityContext: {}
   name: server
   serviceType: ClusterIP
   servicePort: 2746
   # servicePortName: http
   serviceAccount: argo-server
+  # Whether to create the service account with the name specified in
+  # server.serviceAccount and bind it to the server role.
+  createServiceAccount: true
+  # Service account annotations
+  serviceAccountAnnotations: {}
   # Annotations to be applied to the UI Service
   serviceAnnotations: {}
   # Optional labels to add to the UI Service
@@ -139,12 +181,17 @@ server:
   ## Node selectors and tolerations for server scheduling to nodes with taints
   ## Ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/
   ##
-  nodeSelector: {}
+  nodeSelector:
+    kubernetes.io/os: linux
   tolerations: []
   affinity: {}
 
   # Extra arguments to provide to the Argo server binary.
   extraArgs: []
+
+  ## Additional volumes to the server main container.
+  volumeMounts: []
+  volumes: []
 
   ## Ingress configuration.
   ## ref: https://kubernetes.io/docs/user-guide/ingress/
@@ -164,6 +211,11 @@ server:
     # hosts:
     #   - argo.domain.com
 
+    ## Additional Paths for each host
+    # paths:
+    #   - serviceName: "ssl-redirect"
+    #     servicePort: "use-annotation"
+
     ## TLS configuration.
     ## Secrets must be manually created in the namespace.
     ##
@@ -171,6 +223,26 @@ server:
     #   - secretName: argo-ui-tls
     #     hosts:
     #       - argo.domain.com
+  clusterWorkflowTemplates:
+    # Give the server permissions to edit ClusterWorkflowTemplates.
+    enableEditing: true
+  sso:
+    ## SSO configuration when SSO is specified as a server auth mode.
+    ## All the values are requied. SSO is activated by adding --auth-mode=sso
+    ## to the server command line.
+    #
+    ## The root URL of the OIDC identity provider.
+    # issuer: https://accounts.google.com
+    ## Name of a secret and a key in it to retrieve the app OIDC client ID from.
+    # clientId:
+    #   name: argo-server-sso
+    #   key: client-id
+    ## Name of a secret and a key in it to retrieve the app OIDC client secret from.
+    # clientSecret:
+    #   name: argo-server-sso
+    #   key: client-secret
+    ## The OIDC redirect URL. Should be in the form <argo-root-url>/oauth2/callback.
+    # redirectUrl: https://argo/oauth2/callback
 
 # Influences the creation of the ConfigMap for the workflow-controller itself.
 useDefaultArtifactRepo: false
@@ -191,6 +263,23 @@ artifactRepository:
     # bucket:
     # endpoint:
     # region:
+    # roleARN:
+    # useSDKCreds: true
+  # gcs:
+    # bucket: <project>-argo
+    # keyFormat: "{{workflow.namespace}}/{{workflow.name}}/"
+    # serviceAccountKeySecret is a secret selector.
+    # It references the k8s secret named 'my-gcs-credentials'.
+    # This secret is expected to have have the key 'serviceAccountKey',
+    # containing the base64 encoded credentials
+    # to the bucket.
+    #
+    # If it's running on GKE and Workload Identity is used,
+    # serviceAccountKeySecret is not needed.
+    # serviceAccountKeySecret:
+      # name: my-gcs-credentials
+      # key: serviceAccountKey
+
 
 # NOTE: These are setting attributes for the `minio` optional dependency
 minio:
