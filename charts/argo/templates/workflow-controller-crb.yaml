@@ -1,12 +1,15 @@
-{{- if .Values.controller.createServiceAccount }}
 apiVersion: rbac.authorization.k8s.io/v1
+{{- if .Values.singleNamespace }}
+kind: RoleBinding
+{{ else }}
 kind: ClusterRoleBinding
+{{- end }}
 metadata:
-  name: {{ .Release.Name }}-{{ .Values.controller.name}}-binding
+  name: {{ .Release.Name }}-{{ .Values.controller.name }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ .Release.Name }}-{{ .Values.controller.name}}-cluster-role
+  name: {{ .Release.Name }}-{{ .Values.controller.name }}
 subjects:
   - kind: ServiceAccount
     name: {{ .Values.controller.serviceAccount }}
@@ -22,4 +25,16 @@ subjects:
   {{- end }}
 {{- end }}
 {{- end }}
-{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-{{ .Values.controller.name }}-cluster-template
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Name }}-{{ .Values.controller.name }}-cluster-template
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.controller.serviceAccount }}
+    namespace: {{ .Release.Namespace }}

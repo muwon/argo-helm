@@ -27,6 +27,10 @@ spec:
 {{ toYaml .Values.controller.podAnnotations | indent 8}}{{- end }}
     spec:
       serviceAccountName: {{ .Values.controller.serviceAccount | quote }}
+      {{- if .Values.controller.podSecurityContext }}
+      securityContext:
+        {{- toYaml .Values.controller.podSecurityContext | nindent 8 }}
+      {{- end }}
       containers:
         - name: controller
           image: "{{ .Values.images.namespace }}/{{ .Values.images.controller }}:{{ default .Values.images.tag .Values.controller.image.tag }}"
@@ -45,6 +49,17 @@ spec:
           - "{{ .Values.controller.logging.level }}"
           - "--gloglevel"
           - "{{ .Values.controller.logging.globallevel }}"
+          {{- if .Values.singleNamespace }}
+          - "--namespaced"
+          {{- end }}
+          {{- with .Values.controller.workflowWorkers }}
+          - "--workflow-workers"
+          - {{ . | quote }}
+          {{- end }}
+          {{- if .Values.controller.podWorkers }}
+          - "--pod-workers"
+          - {{ . | quote }}
+          {{- end }}
           env:
           - name: ARGO_NAMESPACE
             valueFrom:
@@ -64,6 +79,10 @@ spec:
             name: telemetry
           {{- end }}
           {{- end }}
+      {{- with .Values.images.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- with .Values.controller.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
